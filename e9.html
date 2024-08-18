@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nostalgic Elevator Music Generator</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #f0e6d2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 {
+            color: #8b4513;
+        }
+        #playButton {
+            font-size: 18px;
+            padding: 10px 20px;
+            background-color: #d2b48c;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #visualizer {
+            border: 2px solid #8b4513;
+        }
+    </style>
+</head>
+<body>
+    <h1>Nostalgic Elevator Music Generator</h1>
+    <button id="playButton">Play</button>
+    <canvas id="visualizer" width="600" height="200"></canvas>
+
+    <script>
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const masterGain = audioContext.createGain();
+        masterGain.connect(audioContext.destination);
+        masterGain.gain.setValueAtTime(0.5, audioContext.currentTime);
+
+        const chords = [
+            { name: 'C', notes: [60, 64, 67] },
+            { name: 'Dm', notes: [62, 65, 69] },
+            { name: 'Em', notes: [64, 67, 71] },
+            { name: 'F', notes: [65, 69, 72] },
+            { name: 'G', notes: [67, 71, 74] },
+            { name: 'Am', notes: [69, 72, 76] }
+        ];
+
+        const bridgeProgressions = [
+            ["C", "Am", "F", "G", "C"],
+            ["F", "G", "Em", "Am", "C"],
+            ["Dm", "G", "C", "Am", "F"],
+            ["C", "F", "Dm", "G", "C"],
+            ["Am", "Em", "F", "G", "C"],
+            ["C", "Fm", "C", "G", "C"],
+            ["Am", "F", "C", "G", "Em"],
+            ["Cmaj7", "Fmaj7", "G7", "Em7", "Am7"],
+            ["C6", "Dm7", "G7", "C6"],
+            ["C", "G", "D", "G", "C"],
+            ["C", "F", "Bb", "F", "C"]
+        ];
+
+        const allChords = {
+            "C": [60, 64, 67], "Dm": [62, 65, 69], "Em": [64, 67, 71], "F": [65, 69, 72], "G": [67, 71, 74], "Am": [69, 72, 76],
+            "Fm": [65, 68, 72], "Cmaj7": [60, 64, 67, 71], "Fmaj7": [65, 69, 72, 76], "G7": [67, 71, 74, 77],
+            "Em7": [64, 67, 71, 74], "Am7": [69, 72, 76, 79], "C6": [60, 64, 67, 69], "Dm7": [62, 65, 69, 72],
+            "D": [62, 66, 69], "Bb": [70, 74, 77]
+        };
+
+        const majorScale = [60, 62, 64, 65, 67, 69, 71];
+        const bassPatterns = [
+            [1, 0.5, 0.5, 1, 1],
+            [1.5, 0.5, 1, 1],
+            [1, 1, 1, 1],
+            [0.5, 0.5, 0.5, 0.5, 1, 1],
+            [1, 0.75, 0.25, 1, 1],
+            [0.75, 0.75, 0.5, 1, 1]
+        ];
+
+        let isPlaying = false;
+        let currentChord;
+        let nextNoteTime = 0;
+        let currentBeat = 0;
+        let melodyNotes = [];
+        let barCount = 0;
+        let inBridgeSection = false;
+        let currentBridgeProgression = [];
+        let currentBridgeIndex = 0;
+
+        function createFMSynth(modulationIndex, modulationFrequency) {
+            const carrier = audioContext.createOscillator();
+            const modulator = audioContext.createOscillator();
+            const modulationGain = audioContext.createGain();
+
+            modulator.frequency.value = modulationFrequency;
+            modulationGain.gain.value = modulationIndex * modulationFrequency;
+
+            modulator.connect(modulationGain);
+            modulationGain.connect(carrier.frequency);
+
+            return carrier;
+        }
+
+        function playNote(note, duration, instrument) {
+            const synth = createFMSynth(instrument.modulationIndex, instrument.modulationFrequency);
+            const envelope = audioContext.createGain();
+            const instrumentGain = audioContext.createGain();
+
+            synth.connect(envelope);
+            envelope.connect(instrumentGain);
+            instrumentGain.connect(masterGain);
+
+            synth.frequency.setValueAtTime(440 * Math.pow(2, (note - 69) / 12), audioContext.currentTime);
+
+            envelope.gain.setValueAtTime(0, audioContext.currentTime);
+            envelope.gain.linearRampToValueAtTime(1, audioContext.currentTime + instrument.attack);
+            envelope.gain.linearRampToValueAtTime(instrument.sustain, audioContext.currentTime + instrument.attack + instrument.decay);
+            envelope.gain.setValueAtTime(instrument.sustain, audioContext.currentTime + duration - instrument.release);
+            envelope.gain.linearRampToValueAtTime(0, audioContext.currentTime + duration);
+
+            instrumentGain.gain.setValueAtTime(instrument.volume, audioContext.currentTime);
+
+            synth.start(audioContext.currentTime);
+            synth.stop(audioContext.currentTime + duration);
+
+            if (instrument.name === 'melody' && Math.random() < 0.3 && duration > 0.5) {
+                const vibrato = audioContext.createOscillator();
+                const vibratoGain = audioContext.createGain();
+
+                vibrato.frequency.value = 5;
+                vibratoGain.gain.value = 3;
+
+                vibrato.connect(vibratoGain);
+                vibratoGain.connect(synth.frequency);
+
+                vibrato.start(audioContext.currentTime);
+                vibrato.stop(audioContext.currentTime + duration);
+            }
+
+            return { note, startTime: audioContext.currentTime, duration };
+        }
+
+        function playDrum(type, time, chordNotes) {
+            const osc = audioContext.createOscillator();
+            const envelope = audioContext.createGain();
+            const drumGain = audioContext.createGain();
+
+            osc.connect(envelope);
+            envelope.connect(drumGain);
+            drumGain.connect(masterGain);
+
+            if (type === 'kick') {
+                osc.frequency.setValueAtTime(150, time);
+                osc.frequency.exponentialRampToValueAtTime(0.01, time + 0.5);
+                envelope.gain.setValueAtTime(1, time);
+                envelope.gain.exponentialRampToValueAtTime(0.01, time + 0.5);
+                drumGain.gain.setValueAtTime(0.5, time);
+            } else if (type === 'rim') {
+                const rimNote = chordNotes[1] + 12; // Upper harmonic for rim
+                osc.frequency.setValueAtTime(440 * Math.pow(2, (rimNote - 69) / 12), time);
+                envelope.gain.setValueAtTime(0.5, time);
+                envelope.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+                drumGain.gain.setValueAtTime(0.2, time);
+            } else if (type === 'ride') {
+                const rideNote = chordNotes[2] + 24; // Even higher harmonic for ride
+                osc.frequency.setValueAtTime(440 * Math.pow(2, (rideNote - 69) / 12), time);
+                envelope.gain.setValueAtTime(0.3, time);
+                envelope.gain.exponentialRampToValueAtTime(0.01, time + 0.3);
+                drumGain.gain.setValueAtTime(0.1, time);
+            }
+
+            osc.start(time);
+            osc.stop(time + 0.5);
+
+            return { type, startTime: time, duration: 0.5 };
+        }
+
+        function playChord() {
+            if (!inBridgeSection && barCount >= 30 && Math.random() < 0.1) {
+                startBridgeSection();
+            }
+
+            if (inBridgeSection) {
+                currentChord = { name: currentBridgeProgression[currentBridgeIndex], notes: allChords[currentBridgeProgression[currentBridgeIndex]] };
+                currentBridgeIndex++;
+                if (currentBridgeIndex >= currentBridgeProgression.length) {
+                    inBridgeSection = false;
+                    barCount = 0;
+                }
+            } else {
+                currentChord = chords[Math.floor(Math.random() * chords.length)];
+                barCount++;
+            }
+
+            const chordDuration = [2, 4, 6][Math.floor(Math.random() * 3)];
+
+            // Bass
+            const bassNote = currentChord.notes[0] - 24;
+            const bassPattern = bassPatterns[Math.floor(Math.random() * bassPatterns.length)];
+            let bassTime = 0;
+            bassPattern.forEach(noteDuration => {
+                setTimeout(() => {
+                    playNote(bassNote + (Math.random() < 0.2 ? 12 : 0), noteDuration * 0.24, {
+                        name: 'bass',
+                        modulationIndex: 0.5,
+                        modulationFrequency: 2,
+                        attack: 0.01,
+                        decay: 0.1,
+                        sustain: 0.3,
+                        release: 0.1,
+                        volume: 0.4
+                    });
+                }, bassTime * 1000);
+                bassTime += noteDuration * 0.25;
+            });
+
+            // Harmony
+            setTimeout(() => {
+                currentChord.notes.forEach(note => {
+                    playNote(note, chordDuration * 0.23, {
+                        name: 'harmony',
+                        modulationIndex: 0.1,
+                        modulationFrequency: 1,
+                        attack: 0.1,
+                        decay: 0.2,
+                        sustain: 0.7,
+                        release: 0.3,
+                        volume: 0.15
+                    });
+                });
+            }, 50);
+
+            // Melody
+            melodyNotes = [];
+            for (let i = 0; i < chordDuration * 2; i++) {
+                const useChordNote = Math.random() < 0.6;
+                const note = useChordNote ? currentChord.notes[Math.floor(Math.random() * currentChord.notes.length)] :
+                    majorScale[Math.floor(Math.random() * majorScale.length)];
+                melodyNotes.push(note);
+            }
+
+            let melodyTime = 0;
+            melodyNotes.forEach((note, index) => {
+                const duration = [0.25, 0.5, 0.75][Math.floor(Math.random() * 3)];
+                setTimeout(() => {
+                    playNote(note, duration, {
+                        name: 'melody',
+                        modulationIndex: 0.2,
+                        modulationFrequency: 4,
+                        attack: 0.01,
+                        decay: 0.1,
+                        sustain: 0.6,
+                        release: 0.2,
+                        volume: 0.25
+                    });
+                }, melodyTime * 1000);
+                melodyTime += duration;
+            });
+
+            // Drums
+            for (let i = 0; i < chordDuration; i++) {
+                if (Math.random() < 0.7) {
+                    setTimeout(() => playDrum('kick', audioContext.currentTime, currentChord.notes), i * 250);
+                }
+                if (Math.random() < 0.5) {
+                    setTimeout(() => playDrum('rim', audioContext.currentTime, currentChord.notes), i * 250 + 125);
+                }
+                if (Math.random() < 0.3) {
+                    setTimeout(() => playDrum('ride', audioContext.currentTime, currentChord.notes), i * 250 + (Math.random() < 0.5 ? 0 : 125));
+                }
+            }
+
+            nextNoteTime += chordDuration * 0.25;
+            currentBeat += chordDuration;
+
+            if (isPlaying) {
+                setTimeout(playChord, (nextNoteTime - audioContext.currentTime) * 1000);
+            }
+        }
+
+        function startBridgeSection() {
+            inBridgeSection = true;
+            currentBridgeProgression = bridgeProgressions[Math.floor(Math.random() * bridgeProgressions.length)];
+            currentBridgeIndex = 0;
+        }
+
+        const canvas = document.getElementById('visualizer');
+        const ctx = canvas.getContext('2d');
+
+        function drawNote(note, startTime, duration, color) {
+            const noteHeight = 3;
+            const noteWidth = duration * 200;
+            const y = canvas.height - (note - 38) * noteHeight;
+
+            ctx.fillStyle = color;
+            ctx.fillRect((startTime - audioContext.currentTime) * 200, y, noteWidth, noteHeight);
+        }
+
+        function drawDrum(type, startTime, duration) {
+            const drumHeight = 10;
+            const drumWidth = duration * 200;
+            let y;
+
+            switch (type) {
+                case 'kick':
+                    y = canvas.height - 10;
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+                    break;
+                case 'rim':
+                    y = canvas.height - 20;
+                    ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+                    break;
+                case 'ride':
+                    y = canvas.height - 30;
+                    ctx.fillStyle = 'rgba(0, 0, 255, 0.5)';
+                    break;
+            }
+
+            ctx.fillRect((startTime - audioContext.currentTime) * 200, y, drumWidth, drumHeight);
+        }
+
+        function visualize() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'rgba(240, 230, 210, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (currentChord) {
+                // Draw harmony
+                currentChord.notes.forEach(note => {
+                    drawNote(note, audioContext.currentTime, 1, 'rgba(0, 128, 0, 0.5)');
+                });
+
+                // Draw bass
+                drawNote(currentChord.notes[0] - 24, audioContext.currentTime, 1, 'rgba(128, 0, 0, 0.5)');
+
+                // Draw melody
+                melodyNotes.forEach((note, index) => {
+                    drawNote(note, audioContext.currentTime + index * 0.25, 0.25, 'rgba(0, 0, 128, 0.5)');
+                });
+
+                // Draw drums
+                drawDrum('kick', audioContext.currentTime, 0.5);
+                drawDrum('rim', audioContext.currentTime, 0.5);
+                drawDrum('ride', audioContext.currentTime, 0.5);
+            }
+
+            requestAnimationFrame(visualize);
+        }
+
+        document.getElementById('playButton').addEventListener('click', () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            if (!isPlaying) {
+                isPlaying = true;
+                nextNoteTime = audioContext.currentTime;
+                playChord();
+                visualize();
+            } else {
+                isPlaying = false;
+            }
+        });
+    </script>
+</body>
+</html>
